@@ -104,7 +104,8 @@ body {
 `;
 
 const SEGS = 14;
-const API_BASE = "http://localhost:3001/api";
+// Automatically switch between production and local backend
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001/api";
 
 export default function SummarizeApp() {
   const [tab, setTab]           = useState("text");
@@ -251,6 +252,8 @@ export default function SummarizeApp() {
             
             <select className="win-input" style={{ width: 140, height: 28, padding: '2px 5px', marginRight: 5 }} value={provider} onChange={e => setProvider(e.target.value)}>
               <option value="huggingface">🤗 Hugging Face</option>
+              <option value="gemini">✨ Google Gemini (Free)</option>
+              <option value="groq">⚡ Groq (Ultra-Fast Free)</option>
               <option value="openai">🤖 OpenAI (GPT-4o)</option>
               <option value="anthropic">🎨 Anthropic (Claude 3)</option>
             </select>

@@ -13,6 +13,8 @@ const pdfParse = require("pdf-parse");
 const { HfInference } = require("@huggingface/inference");
 const { OpenAI } = require("openai");
 const Anthropic = require("@anthropic-ai/sdk");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const Groq = require("groq-sdk");
 
 const app = express();
 
@@ -20,6 +22,8 @@ const app = express();
 const hf = new HfInference(process.env.HF_TOKEN);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "dummy");
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 /* ── MIDDLEWARE ─────────────────────────────────────── */
 app.use(cors());
@@ -43,12 +47,35 @@ const LENGTH_MAP = {
  */
 async function callHF(prompt, systemMsg) {
   if (!process.env.HF_TOKEN) throw new Error("Missing HF_TOKEN");
-  const response = await hf.textGeneration({
-    model: "mistralai/Mistral-7B-Instruct-v0.2",
-    inputs: `<s>[INST] ${systemMsg}\n\n${prompt} [/INST]`,
-    parameters: { max_new_tokens: 800, temperature: 0.7, return_full_text: false },
-  });
-  return response.generated_text.trim();
+
+  try {
+    // Primary Model: Zephyr-7B (Stable & Fast)
+    const response = await hf.textGeneration({
+      model: "HuggingFaceH4/zephyr-7b-beta",
+      inputs: `<|system|>\n${systemMsg}</s>\n<|user|>\n${prompt}</s>\n<|assistant|>`,
+      parameters: { 
+        max_new_tokens: 800, 
+        temperature: 0.7, 
+        return_full_text: false,
+        wait_for_model: true 
+      },
+    });
+    return response.generated_text.trim();
+  } catch (error) {
+    console.warn("Primary HF model busy, trying BART summarizer...");
+    try {
+      // Backup Model: BART Large CNN (Dedicated for Summarization)
+      const backup = await hf.summarization({
+        model: "facebook/bart-large-cnn",
+        inputs: prompt,
+        parameters: { wait_for_model: true }
+      });
+      return backup.summary_text.trim();
+    } catch (innerError) {
+      console.error("HF API Error:", innerError.message);
+      throw new Error("Hugging Face is currently overloaded. Please try again in a minute or switch to OpenAI/Anthropic.");
+    }
+  }
 }
 
 async function callOpenAI(prompt, systemMsg) {
@@ -75,6 +102,39 @@ async function callAnthropic(prompt, systemMsg) {
   return response.content[0].text.trim();
 }
 
+async function callGemini(prompt, systemMsg) {
+  if (!process.env.GEMINI_API_KEY) throw new Error("Missing GEMINI_API_KEY");
+  
+  const modelsToTry = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro", "gemini-1.0-pro"];
+  let lastError;
+
+  for (const modelName of modelsToTry) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const fullPrompt = `${systemMsg}\n\n${prompt}`;
+      const result = await model.generateContent(fullPrompt);
+      const response = await result.response;
+      return response.text().trim();
+    } catch (e) {
+      console.warn(`Gemini ${modelName} failed:`, e.message);
+      lastError = e;
+    }
+  }
+  throw new Error(`Gemini failed all models: ${lastError.message}`);
+}
+
+async function callGroq(prompt, systemMsg) {
+  if (!process.env.GROQ_API_KEY) throw new Error("Missing GROQ_API_KEY");
+  const response = await groq.chat.completions.create({
+    messages: [
+      { role: "system", content: systemMsg },
+      { role: "user", content: prompt },
+    ],
+    model: "llama-3.1-8b-instant", // Latest fast and free model
+  });
+  return response.choices[0].message.content.trim();
+}
+
 /**
  * Unified AI call dispatcher
  */
@@ -85,6 +145,10 @@ async function callAI(provider, prompt, systemMsg = "You are a helpful AI assist
         return await callOpenAI(prompt, systemMsg);
       case "anthropic":
         return await callAnthropic(prompt, systemMsg);
+      case "gemini":
+        return await callGemini(prompt, systemMsg);
+      case "groq":
+        return await callGroq(prompt, systemMsg);
       case "huggingface":
       default:
         return await callHF(prompt, systemMsg);
@@ -184,7 +248,7 @@ app.post("/api/chat", async (req, res) => {
 
 // Health Check
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", providers: ["Hugging Face", "OpenAI", "Anthropic"] });
+  res.json({ status: "ok", providers: ["Hugging Face", "OpenAI", "Anthropic", "Gemini", "Groq"] });
 });
 
 /* ── START SERVER ───────────────────────────────────── */
