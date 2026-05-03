@@ -18,12 +18,12 @@ const Groq = require("groq-sdk");
 
 const app = express();
 
-// Initialize Clients
-const hf = new HfInference(process.env.HF_TOKEN);
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "dummy");
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+// Initialize Clients safely (prevent crash if keys are missing)
+const hf = process.env.HF_TOKEN ? new HfInference(process.env.HF_TOKEN) : null;
+const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
+const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
+const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
 /* ── MIDDLEWARE ─────────────────────────────────────── */
 app.use(cors());
@@ -46,7 +46,7 @@ const LENGTH_MAP = {
  * Provider-specific AI calls
  */
 async function callHF(prompt, systemMsg) {
-  if (!process.env.HF_TOKEN) throw new Error("Missing HF_TOKEN");
+  if (!hf) throw new Error("Hugging Face is not configured (missing HF_TOKEN)");
 
   try {
     // Primary Model: Zephyr-7B (Stable & Fast)
@@ -79,7 +79,7 @@ async function callHF(prompt, systemMsg) {
 }
 
 async function callOpenAI(prompt, systemMsg) {
-  if (!process.env.OPENAI_API_KEY) throw new Error("Missing OPENAI_API_KEY");
+  if (!openai) throw new Error("OpenAI is not configured (missing OPENAI_API_KEY)");
   const response = await openai.chat.completions.create({
     model: "gpt-4o-mini", // Cost-effective and fast
     messages: [
@@ -92,7 +92,7 @@ async function callOpenAI(prompt, systemMsg) {
 }
 
 async function callAnthropic(prompt, systemMsg) {
-  if (!process.env.ANTHROPIC_API_KEY) throw new Error("Missing ANTHROPIC_API_KEY");
+  if (!anthropic) throw new Error("Anthropic is not configured (missing ANTHROPIC_API_KEY)");
   const response = await anthropic.messages.create({
     model: "claude-3-haiku-20240307",
     max_tokens: 800,
@@ -103,7 +103,7 @@ async function callAnthropic(prompt, systemMsg) {
 }
 
 async function callGemini(prompt, systemMsg) {
-  if (!process.env.GEMINI_API_KEY) throw new Error("Missing GEMINI_API_KEY");
+  if (!genAI) throw new Error("Gemini is not configured (missing GEMINI_API_KEY)");
   
   const modelsToTry = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro", "gemini-1.0-pro"];
   let lastError;
@@ -124,7 +124,7 @@ async function callGemini(prompt, systemMsg) {
 }
 
 async function callGroq(prompt, systemMsg) {
-  if (!process.env.GROQ_API_KEY) throw new Error("Missing GROQ_API_KEY");
+  if (!groq) throw new Error("Groq is not configured (missing GROQ_API_KEY)");
   const response = await groq.chat.completions.create({
     messages: [
       { role: "system", content: systemMsg },
